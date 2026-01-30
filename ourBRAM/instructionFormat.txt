@@ -1,0 +1,14 @@
+#addition 2-op
+add2 bit_precision
+#addition 1-op
+add1 bit_precision
+#gemv
+gemv mrow, mcol, vsize
+#gemv batched
+gemv mrow, mcol, vsize, batches
+#dot product (just GEMV without adding bias)
+dotp mrow, mcol, vsize
+#dot product of matrix-matrix
+dotpmm mrow, mcol, m2row, m2col
+#dot product of matrix-matrix performed *batch*-number of times
+dotpmm_b mrow, mcol, m2row, m2col, batches
