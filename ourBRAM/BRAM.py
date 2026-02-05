@@ -90,6 +90,10 @@ class BRAM():
 #     for i in range(21):
 #         bram1.GEMV(bit_length=8, acc_length=8, mult_length=8, num_words=768)
 #     print(bram1.cycle_count)
+DEBUG=True
+def print_debug(message: str):
+    if(DEBUG):
+        print(message)
 
 class PIM_FPGA():
     def __init__(self, base_prec=4, inc_acc_prec=False):
@@ -106,6 +110,8 @@ class PIM_FPGA():
             if(inc_acc_prec): 
                 acc_prec += 1
             self.bram.add1op(acc_prec)
+        if(inc_acc_prec): 
+                acc_prec -= 1
         return acc_prec
     
     def travel_data(self, bit_length:int, distance:int): #move data close enough to be operated on in an inter-BRAM operation
@@ -113,10 +119,11 @@ class PIM_FPGA():
         while dis > 9:
             # print("must copy data")
             self.bram.add1op(bit_length) #perform a copy across 9 BRAMs
+            # print_debug("performing copy")
             dis -= 9
         return
     
-    def interAcc(self, bit_precision:int, num_BRAMS:int, inc_acc_prec=False):
+    def interAcc(self, num_BRAMS:int, bit_precision:int, inc_acc_prec=False):
         words = num_BRAMS
         distance = 1
         to_travel = 1
@@ -128,6 +135,7 @@ class PIM_FPGA():
             self.bram.add1op(acc_precision)
             words = math.ceil(words/2)
             to_travel *= min(2,math.ceil(num_BRAMS/2))
+
         return acc_precision
 
     def GEMV(self, mrow, mcol, vsize, mprec, vprec, bias_prec, inc_acc_prec=False):
@@ -154,22 +162,32 @@ class PIM_FPGA():
             self.bram.mult(vprec, mprec)
             #perform intra-BRAM accumulation
             product_prec = (vprec+mprec)
-            acc_precision = product_prec + math.log2(mcol) + 1
-            if(inc_acc_prec):
+            acc_precision = product_prec + math.ceil(math.log2(mcol)) + 1
+            if(inc_acc_prec==True):
                 acc_precision = product_prec #start low. Increase as you go
+
+            # print("og acc precision ", acc_precision)
 
             num_words = mcol
             if num_words >= 40:
-                acc_precision = self.intraAcc(acc_precision, 40, inc_acc_prec=inc_acc_prec)
+                acc_ret = self.intraAcc(40, acc_precision, inc_acc_prec=inc_acc_prec)
+                if(inc_acc_prec==True):
+                    acc_precision = acc_ret #start low. Increase as you go
             else:
-                acc_precision  = self.intraAcc(acc_precision, num_words, inc_acc_prec=inc_acc_prec)
+                acc_ret  = self.intraAcc(num_words, acc_precision, inc_acc_prec=inc_acc_prec)
+                if(inc_acc_prec==True):
+                    acc_precision = acc_ret #start low. Increase as you go
             num_words = math.ceil(num_words/40)
             #perform inter-BRAM accumulation (if needed)
             if num_words > 1:
-                self.interAcc(acc_precision, num_words, inc_acc_prec=True)
+                acc_ret = self.interAcc(num_words, acc_precision,  inc_acc_prec=inc_acc_prec)
                 num_words = 1
+                if(inc_acc_prec==True):
+                    acc_precision = acc_ret #start low. Increase as you go
+
             #perform addition (add the bias)
             self.bram.addsub2op(bias_prec, 0,0,0)
+            # print("final acc precision ", acc_precision)
     
     def GEMV_batched(self, mrow, mcol, vsize, num_patches, mprec, vprec, bias_prec, inc_acc_prec=False):
         for patch in range(num_patches):
@@ -199,19 +217,24 @@ class PIM_FPGA():
             self.bram.mult(vprec, mprec)
             #perform intra-BRAM accumulation
             product_prec = (vprec+mprec)
-            acc_precision = product_prec + math.log2(mcol) + 1
+            acc_precision = product_prec + math.ceil(math.log2(mcol)) + 1
             if(inc_acc_prec):
                 acc_precision = product_prec #start low. Increase as you go
 
             num_words = mcol
             if num_words >= 40:
-                acc_precision = self.intraAcc(acc_precision, 40, inc_acc_prec=inc_acc_prec)
+                acc_ret = self.intraAcc(40, acc_precision, inc_acc_prec=inc_acc_prec)
+                if(inc_acc_prec):
+                    acc_precision = acc_ret #start low. Increase as you go
             else:
-                acc_precision  = self.intraAcc(acc_precision, num_words, inc_acc_prec=inc_acc_prec)
+                acc_ret  = self.intraAcc(num_words, acc_precision, inc_acc_prec=inc_acc_prec)
+                if(inc_acc_prec):
+                    acc_precision = acc_ret #start low. Increase as you go
+
             num_words = math.ceil(num_words/40)
             #perform inter-BRAM accumulation (if needed)
             if num_words > 1:
-                self.interAcc(acc_precision, num_words, inc_acc_prec=True)
+                self.interAcc(num_words, acc_precision, inc_acc_prec=inc_acc_prec)
                 num_words = 1
 
     def dotproductmm(self, mrow, mcol, m2row, m2col, mprec, m2prec, inc_acc_prec=False):
@@ -230,7 +253,7 @@ class PIM_FPGA():
         #Then perform the matrix-matrix dotp num_batches-times.
         base_dotp_num_bram = math.ceil(mcol/40)*mrow
         dotps_at_a_time = math.floor(self.num_bram / base_dotp_num_bram)
-        dotp_iterations = math.ceil(m2row * num_batches / dotps_at_a_time) 
+        dotp_iterations = math.ceil(m2col * num_batches / dotps_at_a_time) 
         for i in range(dotp_iterations): #perform all mv dotp operations
             self.dotproduct(mrow, mcol, m2row, mprec, m2prec, inc_acc_prec=inc_acc_prec)
     

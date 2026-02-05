@@ -15,22 +15,30 @@ def parse_input(input_file) -> list:
     return operations
         
 def run_operations(bit_prec, operations):
-    pim = PIM_FPGA(base_prec=bit_prec, inc_acc_prec=False)
+    pim = PIM_FPGA(base_prec=bit_prec, inc_acc_prec=True)
+    pim2 = PIM_FPGA(base_prec=bit_prec, inc_acc_prec=False)
     for op in operations:
         prev_count = pim.bram.cycle_count
+        prev_count2 = pim2.bram.cycle_count
         match op['op'].strip():
             case 'gemv':
                 pim.GEMV(op['args'][0], op['args'][1], op['args'][2], pim.base_prec, pim.base_prec, pim.base_prec, pim.increment_acc)
+                pim2.GEMV(op['args'][0], op['args'][1], op['args'][2], pim.base_prec, pim.base_prec, pim.base_prec, pim2.increment_acc)
             case 'gemv_b':
                 pim.GEMV_batched(op['args'][0], op['args'][1], op['args'][2], op['args'][3], pim.base_prec, pim.base_prec, pim.base_prec, pim.increment_acc)
+                pim2.GEMV_batched(op['args'][0], op['args'][1], op['args'][2], op['args'][3], pim.base_prec, pim.base_prec, pim2.base_prec, pim2.increment_acc)
             case 'dotp:':
                 pim.dotproduct(op['args'][0], op['args'][1], op['args'][2], pim.base_prec, pim.base_prec, pim.increment_acc)
+                pim2.dotproduct(op['args'][0], op['args'][1], op['args'][2], pim.base_prec, pim.base_prec, pim2.increment_acc)
             case 'dotpmm:':
                 pim.dotproductmm(op['args'][0], op['args'][1], op['args'][2], op['args'][3], pim.base_prec, pim.base_prec, pim.increment_acc)
+                pim2.dotproductmm(op['args'][0], op['args'][1], op['args'][2], op['args'][3], pim.base_prec, pim.base_prec, pim2.increment_acc)
             case 'dotpmm_b':
                 pim.dotproductmm_batched(op['args'][0], op['args'][1], op['args'][2], op['args'][3], op['args'][4], pim.base_prec, pim.base_prec, pim.increment_acc)
-        print(op['op'], ' cycles: ', pim.bram.cycle_count - prev_count)
+                pim2.dotproductmm_batched(op['args'][0], op['args'][1], op['args'][2], op['args'][3], op['args'][4], pim.base_prec, pim.base_prec, pim2.increment_acc)
+        print('\t', op['op'], ' cycles: ', pim.bram.cycle_count - prev_count, pim2.bram.cycle_count - prev_count2)
     print('pim cycles: ', pim.bram.cycle_count)
+    print('pim fixed acc size cycles: ', pim2.bram.cycle_count)
 
 
 parser = argparse.ArgumentParser()
@@ -39,7 +47,7 @@ parser.add_argument("input", help="input file (txt format)")
 if __name__ == "__main__":
     args = parser.parse_args()
     ops = parse_input(args.input)
-    bit_precisions = [8]
+    bit_precisions = [2, 4, 8]
     for precision in bit_precisions:
         print('Bit-precision: ', precision)
         run_operations(precision, ops)
