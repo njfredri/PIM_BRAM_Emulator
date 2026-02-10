@@ -10,6 +10,7 @@ class BRAM():
         self.bit_width = num_col/col_muxing
         self.num_pes = num_col/col_muxing
         self.maxBRAMJumps = 9
+        self.base_word_size = col_muxing #4
         
         # # self.reg_file = np.zeros(shape=(self.bit_width*2)) #regular register file
         # self.pipe_reg2 = np.zeros(shape=((self.bit_width*2)+1)) #register after networking
@@ -47,18 +48,20 @@ class BRAM():
             bitcnt += 4
     
     def add1op(self, bit_length:int):
-        bitcnt = 4
+        bitcnt = self.base_word_size
         self.two_cycle_op_first_iter()
         while bitcnt < bit_length:
             self.two_cycle_op_iter()
-            bitcnt += 4
+            bitcnt += self.base_word_size
 
     def mult(self, bit_length:int, mult_length:int):
+        acc_length = bit_length + mult_length
+        mult_acc_add_length = bit_length + self.base_word_size #This is to handle overlap when accumulator's current bits are split across rows. Faster than doing "acc_length" operations every time
         for i in range(mult_length):
             #Spend 1 CC to read the multiplier bits
             self.cycle_count += 1
             #Perform the 2-op add/sub/cpy between the accumulator and multiplicand
-            self.addsub2op(bit_length=bit_length, rownum1=0, rownum2=0, rowdes=0)
+            self.addsub2op(bit_length=mult_acc_add_length, rownum1=0, rownum2=0, rowdes=0)
     
     # def GEMV(self, bit_length:int, acc_length:int, mult_length:int, num_words:int):
     #     #perform element-wise accumulation
