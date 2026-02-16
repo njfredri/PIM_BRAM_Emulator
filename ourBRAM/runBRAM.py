@@ -16,7 +16,7 @@ def parse_input(input_file) -> list:
         
 def run_operations(bit_prec, operations):
     pim = PIM_FPGA(base_prec=bit_prec, inc_acc_prec=True)
-    pim2 = PIM_FPGA(base_prec=bit_prec, inc_acc_prec=False)
+    pim2 = PIM_FPGA(base_prec=bit_prec, inc_acc_prec=True, radix4=True)
     for op in operations:
         prev_count = pim.bram.cycle_count
         prev_count2 = pim2.bram.cycle_count
@@ -37,9 +37,8 @@ def run_operations(bit_prec, operations):
                 pim.dotproductmm_batched(op['args'][0], op['args'][1], op['args'][2], op['args'][3], op['args'][4], pim.base_prec, pim.base_prec, pim.increment_acc)
                 pim2.dotproductmm_batched(op['args'][0], op['args'][1], op['args'][2], op['args'][3], op['args'][4], pim.base_prec, pim.base_prec, pim2.increment_acc)
         print('\t', op['op'], ' cycles: ', pim.bram.cycle_count - prev_count, pim2.bram.cycle_count - prev_count2)
-    print('pim cycles: ', pim.bram.cycle_count)
-    print('pim fixed acc size cycles: ', pim2.bram.cycle_count)
-
+    print('pim radix2 cycles: ', pim.bram.cycle_count)
+    print('pim radix4 cycles: ', pim2.bram.cycle_count)
 
 parser = argparse.ArgumentParser()
 parser.add_argument("input", help="input file (txt format)")

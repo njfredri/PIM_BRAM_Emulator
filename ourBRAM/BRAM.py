@@ -1,9 +1,15 @@
 import numpy as np
 import math
+
+DEBUG=True
+def print_debug(message: str):
+    if(DEBUG):
+        print(message)
+
 ###This class is intended to emulate just the BRAM. It will emulate the memory array and bit-serial periphery
 ###For now, it will do cycle counts, not necessarily logic (yet)
 class BRAM():
-    def __init__(self, num_col=160, num_row=128, col_muxing=4):
+    def __init__(self, num_col=160, num_row=128, col_muxing=4, radix4=False):
         self.PIM_mode = False
         self.num_ports = 2
         self.mem_array = np.zeros(shape=(num_col, num_row), dtype=np.bool)
@@ -11,13 +17,16 @@ class BRAM():
         self.num_pes = num_col/col_muxing
         self.maxBRAMJumps = 9
         self.base_word_size = col_muxing #4
-        
+
         # # self.reg_file = np.zeros(shape=(self.bit_width*2)) #regular register file
         # self.pipe_reg2 = np.zeros(shape=((self.bit_width*2)+1)) #register after networking
         # self.pipe_reg2 = np.zeros(shape=((self.bit_width*2))) #register after opmux
         # self.pipe_reg3 = np.zeros(shape=(self.bit_width)) #write-back register
 
         self.cycle_count = 0
+        self.mult_cycles = 0
+        self.networking_2 = True
+        self.radix4 = radix4
 
     def three_cycle_op(self): #for addition, subtraction, and copy (just booth's)
         #read cycle
@@ -55,13 +64,18 @@ class BRAM():
             bitcnt += self.base_word_size
 
     def mult(self, bit_length:int, mult_length:int):
-        acc_length = bit_length + mult_length
         mult_acc_add_length = bit_length + self.base_word_size #This is to handle overlap when accumulator's current bits are split across rows. Faster than doing "acc_length" operations every time
-        for i in range(mult_length):
+        #executing extra 4-bits also allows the radix 4 add/sub 2x to work (need to handle cases with an extra bit offset)
+        mult_iterations = mult_length
+        if self.radix4:
+            mult_iterations = math.ceil(mult_length/2)
+        for i in range(mult_iterations):
             #Spend 1 CC to read the multiplier bits
+            oldcount = self.cycle_count
             self.cycle_count += 1
             #Perform the 2-op add/sub/cpy between the accumulator and multiplicand
             self.addsub2op(bit_length=mult_acc_add_length, rownum1=0, rownum2=0, rowdes=0)
+            self.mult_cycles += self.cycle_count - oldcount
     
     # def GEMV(self, bit_length:int, acc_length:int, mult_length:int, num_words:int):
     #     #perform element-wise accumulation
@@ -88,20 +102,10 @@ class BRAM():
         self.cycle_count += bit_length
         
 
-# if __name__ == "__main__":
-#     bram1 = BRAM()
-#     for i in range(21):
-#         bram1.GEMV(bit_length=8, acc_length=8, mult_length=8, num_words=768)
-#     print(bram1.cycle_count)
-DEBUG=True
-def print_debug(message: str):
-    if(DEBUG):
-        print(message)
-
 class PIM_FPGA():
-    def __init__(self, base_prec=4, inc_acc_prec=False):
+    def __init__(self, base_prec=4, inc_acc_prec=False, radix4=False):
         self.num_bram = 2423
-        self.bram = BRAM()
+        self.bram = BRAM(radix4=radix4)
         self.pes_per_bram = self.bram.num_pes
         self.base_prec = base_prec
         self.increment_acc = inc_acc_prec
@@ -121,7 +125,10 @@ class PIM_FPGA():
         dis = distance
         while dis > 9:
             # print("must copy data")
-            self.bram.add1op(bit_length) #perform a copy across 9 BRAMs
+            if self.bram.networking_2:
+                self.bram.cycle_count += math.ceil(bit_length/4)
+            else:
+                self.bram.add1op(bit_length) #perform a copy across 9 BRAMs
             # print_debug("performing copy")
             dis -= 9
         return
