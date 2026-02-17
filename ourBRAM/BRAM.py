@@ -77,25 +77,7 @@ class BRAM():
             self.addsub2op(bit_length=mult_acc_add_length, rownum1=0, rownum2=0, rowdes=0)
             self.mult_cycles += self.cycle_count - oldcount
     
-    # def GEMV(self, bit_length:int, acc_length:int, mult_length:int, num_words:int):
-    #     #perform element-wise accumulation
-    #     self.mult(bit_length, mult_length)
-    #     #perform intra-BRAM accumulation
-    #     num = num_words
-    #     if num >= 40:
-    #         self.intraAcc(acc_length, 40)
-    #     else:
-    #         self.intraAcc(acc_length, num)
-    #     num = math.ceil(num/40)
-    #     #perform inter-BRAM accumulation
-    #     if(num > 1):
-    #         # print('here')
-    #         self.interAcc(acc_length, num)
-    #         num = 1
-    #     #perform addition (adding the bias)
-    #     self.addsub2op(acc_length, 0,0,0)
-
-    def offloadToDSPs(self, bit_length:int):
+    def offloadToDSPs(self, bit_length:int): #not used
         #immediately read from data port B using the output shift-reg
         self.cycle_count += 1 #perform the bit-parallel operation using the DSP
         #start writing back in bit-serial form
@@ -255,6 +237,7 @@ class PIM_FPGA():
         dotp_iterations = math.ceil(m2row / dotps_at_a_time)
         for i in range(dotp_iterations): #perform all mv dotp operations
             self.dotproduct(mrow, mcol, m2col, mprec, m2prec, inc_acc_prec=inc_acc_prec)
+            #TODO: Add in same way to account for overhead of concatenating DP-MV result into DP-MM result
     
     def dotproductmm_batched(self, mrow, mcol, m2row, m2col, mprec, m2prec, num_batches, inc_acc_prec=False):
         # print(mcol, m2row)
@@ -267,3 +250,25 @@ class PIM_FPGA():
         for i in range(dotp_iterations): #perform all mv dotp operations
             self.dotproduct(mrow, mcol, m2row, mprec, m2prec, inc_acc_prec=inc_acc_prec)
     
+    def convolution_layer(self, inh, inw, kh, kw, sh, sw, ph, pw, mprec, m2prec, bias_prec, inc_acc_prec=False):
+        gemm_dim = Im2Col.conv_to_gemm(inh, inw, kh, kw, sh, sw, ph, pw)
+        self.dotproductmm(gemm_dim[0], gemm_dim[1], gemm_dim[2], gemm_dim[3], mprec, m2prec, inc_acc_prec)
+        self.bram.addsub2op(bias_prec, 0,0,0) #add the bias
+        return
+
+class Im2Col():
+    def calc_output_size(inh, inw, kh, kw, sh, sw, ph, pw):
+        outw = 1 + ((inw - kw + 2*pw)/sw)
+        outh = 1 + ((inh - kh + 2*ph)/sh)
+        return outw, outh
+
+    def conv_to_gemm(inh, inw, inc, kh, kw, num_filt, sh, sw, ph, pw):
+        outw,outh = Im2Col.calc_output_size(inh, inw, kh, kw, sh, sw, ph, pw)
+        outc = num_filt
+        #work backwards to get outw x outh x outc matrix using dotpmm
+        #(outc x _____) * (______ x outh*outw) = outc x (outh*outw)
+        #each element in the output matrix is a kernel/filter activation
+        #Each activation is a matrix-op with a kernel filter
+        #each kernel filter is Kw*kh*inc
+        kernel_dim = kw*kh*inc
+        return outc, kernel_dim, kernel_dim, outw*outh
