@@ -36,6 +36,10 @@ def run_operations(bit_prec, operations):
             case 'dotpmm_b':
                 pim.dotproductmm_batched(op['args'][0], op['args'][1], op['args'][2], op['args'][3], op['args'][4], pim.base_prec, pim.base_prec, pim.increment_acc)
                 pim2.dotproductmm_batched(op['args'][0], op['args'][1], op['args'][2], op['args'][3], op['args'][4], pim.base_prec, pim.base_prec, pim2.increment_acc)
+            case 'conv':
+                pim.conv2(op['args'][0], op['args'][1], op['args'][2], op['args'][3], op['args'][4], op['args'][5], pim.base_prec, pim.base_prec, pim.base_prec, pim.increment_acc)
+                pim2.conv2(op['args'][0], op['args'][1], op['args'][2], op['args'][3], op['args'][4], op['args'][5], pim2.base_prec, pim2.base_prec, pim2.base_prec, pim2.increment_acc)
+
         print('\t', op['op'], ' cycles: ', pim.bram.cycle_count - prev_count, pim2.bram.cycle_count - prev_count2)
     print('pim radix2 cycles: ', pim.bram.cycle_count)
     print('pim radix4 cycles: ', pim2.bram.cycle_count)

@@ -182,12 +182,17 @@ class PIM_FPGA():
             # print("final acc precision ", acc_precision)
     
     def GEMV_batched(self, mrow, mcol, vsize, num_patches, mprec, vprec, bias_prec, inc_acc_prec=False):
+        # num_req_BRAM_for_rows = mrow
+        # num_req_BRAM_for_acc  = math.ceil(mcol / self.pes_per_bram)
+        # print(num_req_BRAM_for_acc*num_req_BRAM_for_rows)
         for patch in range(num_patches):
             self.GEMV(mrow, mcol, vsize, mprec, vprec, bias_prec, inc_acc_prec=inc_acc_prec)
 
     
 
     def dotproduct(self, mrow, mcol, vsize, mprec, vprec, inc_acc_prec=False):
+        if(mcol!=vsize):
+            print(mcol, ' ', vsize)
         assert mcol==vsize
         #if the GEMV operation is too large, break it up into peices
         num_req_BRAM_for_rows = mrow
@@ -230,15 +235,24 @@ class PIM_FPGA():
                 num_words = 1
 
     def dotproductmm(self, mrow, mcol, m2row, m2col, mprec, m2prec, inc_acc_prec=False):
-        assert mcol==m2row
-        #base dotp operation = <mrow,mcol> * <m2col>. Do that dotp m2row-times
-        base_dotp_num_bram = math.ceil(mcol/40)*mrow
-        dotps_at_a_time = math.floor(self.num_bram / base_dotp_num_bram)
-        dotp_iterations = math.ceil(m2row / dotps_at_a_time)
-        for i in range(dotp_iterations): #perform all mv dotp operations
-            self.dotproduct(mrow, mcol, m2col, mprec, m2prec, inc_acc_prec=inc_acc_prec)
-            #TODO: Add in same way to account for overhead of concatenating DP-MV result into DP-MM result
-    
+        try:
+            assert mcol==m2row
+            #base dotp operation = <mrow,mcol> * <m2col>. Do that dotp m2row-times
+            base_dotp_num_bram = math.ceil(mcol/40)*mrow
+            print('\tbase_dotp_num_bram', base_dotp_num_bram)
+            dotps_at_a_time = math.floor(self.num_bram / base_dotp_num_bram)
+            if dotps_at_a_time==0:
+                dotps_at_a_time = self.num_bram / base_dotp_num_bram
+            print('\tdotps_at_a_time ', dotps_at_a_time)
+            dotp_iterations = math.ceil(m2col / dotps_at_a_time)
+            for i in range(dotp_iterations): #perform all mv dotp operations
+                self.dotproduct(mrow, mcol, m2row, mprec, m2prec, inc_acc_prec=inc_acc_prec)
+                #TODO: Add in same way to account for overhead of concatenating DP-MV result into DP-MM result
+        except:
+            base_dotp_num_bram = math.ceil(mcol/40)*mrow
+            dotp_iterations = math.ceil(m2col / dotps_at_a_time)
+            print('ERROR:', mcol, mrow, self.num_bram)
+
     def dotproductmm_batched(self, mrow, mcol, m2row, m2col, mprec, m2prec, num_batches, inc_acc_prec=False):
         # print(mcol, m2row)
         assert mcol==m2row
@@ -246,14 +260,29 @@ class PIM_FPGA():
         #Then perform the matrix-matrix dotp num_batches-times.
         base_dotp_num_bram = math.ceil(mcol/40)*mrow
         dotps_at_a_time = math.floor(self.num_bram / base_dotp_num_bram)
-        dotp_iterations = math.ceil(m2col * num_batches / dotps_at_a_time) 
+        if dotps_at_a_time==0:
+                dotps_at_a_time = self.num_bram / base_dotp_num_bram
+        dotp_iterations = math.ceil(m2col * num_batches / dotps_at_a_time)
         for i in range(dotp_iterations): #perform all mv dotp operations
             self.dotproduct(mrow, mcol, m2row, mprec, m2prec, inc_acc_prec=inc_acc_prec)
     
-    def convolution_layer(self, inh, inw, kh, kw, sh, sw, ph, pw, mprec, m2prec, bias_prec, inc_acc_prec=False):
-        gemm_dim = Im2Col.conv_to_gemm(inh, inw, kh, kw, sh, sw, ph, pw)
-        self.dotproductmm(gemm_dim[0], gemm_dim[1], gemm_dim[2], gemm_dim[3], mprec, m2prec, inc_acc_prec)
+    def conv1(self, inh, inw, kh, kw, sh, sw, ph, pw, mprec, m2prec, bias_prec, inc_acc_prec=False):
+        gemm_dim = Im2Col.conv_out_to_gemm(inh, inw, kh, kw, sh, sw, ph, pw)
+        self.dotproductmm_batched(gemm_dim[0], gemm_dim[1], gemm_dim[2], gemm_dim[3], mprec, m2prec, 1, inc_acc_prec)
         self.bram.addsub2op(bias_prec, 0,0,0) #add the bias
+        return
+#  0 = filter width
+#  1 = filter height
+#  2 = input  channel
+#  3 = output height
+#  4 = output width
+#  5 = output channel
+    #convolution when given just the output size, kernel size, and in channels
+    def conv2(self, kh, kw, inc, outh, outw, outc, mprec, m2prec, bias_prec, inc_acc_prec=False):
+        gemm_dim = Im2Col.conv_out_to_gemm(kh, kw, inc, outh, outw, outc)
+        # self.dotproductmm(gemm_dim[0], gemm_dim[1], gemm_dim[2], gemm_dim[3], mprec, m2prec, inc_acc_prec)
+        # self.bram.addsub2op(bias_prec, 0,0,0) #add the bias
+        self.GEMV_batched(gemm_dim[0], gemm_dim[1], gemm_dim[2], gemm_dim[3], mprec, m2prec, bias_prec, inc_acc_prec)
         return
 
 class Im2Col():
@@ -270,5 +299,9 @@ class Im2Col():
         #each element in the output matrix is a kernel/filter activation
         #Each activation is a matrix-op with a kernel filter
         #each kernel filter is Kw*kh*inc
+        kernel_dim = kw*kh*inc
+        return outc, kernel_dim, kernel_dim, outw*outh
+
+    def conv_out_to_gemm(kh, kw, inc, outh, outw, outc):
         kernel_dim = kw*kh*inc
         return outc, kernel_dim, kernel_dim, outw*outh
