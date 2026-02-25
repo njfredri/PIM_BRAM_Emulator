@@ -12,7 +12,7 @@ class BRAM():
     def __init__(self, num_col=160, num_row=128, col_muxing=4, radix4=False):
         self.PIM_mode = False
         self.num_ports = 2
-        self.mem_array = np.zeros(shape=(num_col, num_row), dtype=np.bool)
+        # self.mem_array = np.zeros(shape=(num_col, num_row), dtype=np.bool)
         self.bit_width = num_col/col_muxing
         self.num_pes = num_col/col_muxing
         self.maxBRAMJumps = 9
@@ -188,8 +188,6 @@ class PIM_FPGA():
         for patch in range(num_patches):
             self.GEMV(mrow, mcol, vsize, mprec, vprec, bias_prec, inc_acc_prec=inc_acc_prec)
 
-    
-
     def dotproduct(self, mrow, mcol, vsize, mprec, vprec, inc_acc_prec=False):
         if(mcol!=vsize):
             print(mcol, ' ', vsize)
@@ -268,7 +266,8 @@ class PIM_FPGA():
     
     def conv1(self, inh, inw, kh, kw, sh, sw, ph, pw, mprec, m2prec, bias_prec, inc_acc_prec=False):
         gemm_dim = Im2Col.conv_out_to_gemm(inh, inw, kh, kw, sh, sw, ph, pw)
-        self.dotproductmm_batched(gemm_dim[0], gemm_dim[1], gemm_dim[2], gemm_dim[3], mprec, m2prec, 1, inc_acc_prec)
+        self.dotproductmm(gemm_dim[0], gemm_dim[1], gemm_dim[2], gemm_dim[3], mprec, m2prec, inc_acc_prec)
+        print(self.bram.cycle_count)
         self.bram.addsub2op(bias_prec, 0,0,0) #add the bias
         return
 #  0 = filter width
@@ -281,10 +280,35 @@ class PIM_FPGA():
     def conv2(self, kh, kw, inc, outh, outw, outc, mprec, m2prec, bias_prec, inc_acc_prec=False):
         gemm_dim = Im2Col.conv_out_to_gemm(kh, kw, inc, outh, outw, outc)
         # self.dotproductmm(gemm_dim[0], gemm_dim[1], gemm_dim[2], gemm_dim[3], mprec, m2prec, inc_acc_prec)
+        # print(self.bram.cycle_count)
         # self.bram.addsub2op(bias_prec, 0,0,0) #add the bias
         self.GEMV_batched(gemm_dim[0], gemm_dim[1], gemm_dim[2], gemm_dim[3], mprec, m2prec, bias_prec, inc_acc_prec)
         return
+    
+    def conv3(self, kh, kw, inc, outh, outw, outc, mprec, m2prec, bias_prec, inc_acc_prec=False):
+        bram_width = math.ceil(outw/self.bram.num_pes)
+        num_brams_full_img = outh * inc * bram_width 
+        num_parts_per_filter = math.ceil(num_brams_full_img* outc / self.num_bram)
+        print(bram_width, num_brams_full_img, num_parts_per_filter)
 
+        for part in range(num_parts_per_filter):
+            mults=kh*kw
+            for mult in range(mults):
+                self.bram.mult(mprec, m2prec)
+            acc_prec = mprec+m2prec
+            for i in range(kh): #accumulate the rows
+                self.bram.addsub2op(acc_prec, 0, 0, 0)
+                acc_prec += 1
+            for i in range(kw): #accumulate the columns
+                self.bram.addsub2op(acc_prec, 0, 0, 0)
+                acc_prec += 1
+            for i in range(inc): #accumulate along channels
+                self.bram.addsub2op(acc_prec,0,0,0)
+                acc_prec += 1
+            #add the bias
+            self.bram.addsub2op(bias_prec,0,0,0)
+
+        
 class Im2Col():
     def calc_output_size(inh, inw, kh, kw, sh, sw, ph, pw):
         outw = 1 + ((inw - kw + 2*pw)/sw)
@@ -304,4 +328,4 @@ class Im2Col():
 
     def conv_out_to_gemm(kh, kw, inc, outh, outw, outc):
         kernel_dim = kw*kh*inc
-        return outc, kernel_dim, kernel_dim, outw*outh
+        return outw*outh, kernel_dim, kernel_dim, outc
