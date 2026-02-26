@@ -1,15 +1,16 @@
 
 #Q
-#gemv mrow, mcol, vsize
 #       (64*12)    768 is num_cols (accumulated). Rows can be parallelized
-gemv_b 768 768 768 12
-#K
-gemv_b 768 768 768 12
+# <197x768> * <768x64> per head (12)
+# batches can be parallelized, so we do (64*12 = 768) batches
+dotpmm_b 197 768 768 64 12
+#K 
+dotpmm_b 197 768 768 64 12
 #V
-gemv_b 768 768 768 12
+dotpmm_b 197 768 768 64 12
 
 #Q*K_t <197,64>*<64,197> = <197, 197>
-dotpmm_b 197 64 64 197 12
+#dotpmm_b 197 64 64 197 12
 
 #W*V <197,197> * <197, 64> = <197,64>
-dotpmm_b 197 197 197 64 12
+#dotpmm_b 197 197 197 64 12
