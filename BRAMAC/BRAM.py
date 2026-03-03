@@ -37,6 +37,7 @@ class BRAMAC():
             self.p /= 2
             self.rd_acc_delay = 4
             self.mac2_del /= 2
+            self.mac2_del = math.ceil(self.mac2_del)
         self.cc = 0
         self.lastop = 'none'
     
@@ -96,20 +97,28 @@ class PIM_FPGA():
             intra_mac2_init_cc = self.bram.mac2() #done to account for pipelining start-up overhead
             intra_mac2_sub_seq_cc = self.bram.mac2() #subsequent pipelined mac2 delay
             total_intra_mac2_cc = intra_mac2_init_cc + ((num_intra_bram_mac2s-1) * intra_mac2_sub_seq_cc)
+            
             #determine number of accumulator read_outs. Assume they are auto-accumulated by DSPs with no extra latency (other than read-out)
             #since it performs mac2, they perform dot-product 2 columns at a time
             num_max_dp_overflow = math.floor((num_intra_bram_mac2s * 2) / self.bram.maxdp) #use floor because the last acc value does not need to be read to prevent overflow 
             acc_read_cc = self.partialAccRead()
             total_acc_readout_cc = acc_read_cc * num_max_dp_overflow
+            # print(num_intra_bram_mac2s)
+            # print(acc_read_cc)
+            # print(num_max_dp_overflow)
             
             #perform inter-BRAM accumulation
             inter_acc = math.ceil(math.log2(numBRAM_split))
             inter_acc_cc = self.interAcc()
             total_inter_acc_cc = inter_acc_cc * inter_acc
-
+            
+            #accumulate the read-out accumulator values with final acc values
+            self.bram.mac2()
+            total_acc_readout_cc += (num_max_dp_overflow) * 1# #assume 1 cc MAC with DSPs
+            total_acc_readout_cc += self.partialAccRead() + 1 #read out final accumulator and accumulate it
+            print_debug('total acc ' +  str(total_acc_readout_cc))
             total_cc = total_intra_mac2_cc + total_acc_readout_cc + total_inter_acc_cc
             return total_cc
-
 
     def dotpmv_explore(self, inrow, incol, in2row):
         assert incol == in2row
@@ -122,9 +131,45 @@ class PIM_FPGA():
         print_debug(str(len(delays)))
         return min(delays)
 
-
+    def dotpmm(self, inrow, incol, in2row, in2col, split1:int):
+        #split2: num BRAM dedicated to parallel MV Dotproducts
+        #number of rows to split inrow across for dotpmv
+        print_debug(str(inrow) + ',' + str(incol) + ','+ str(in2row) + ','+ str(in2col) + ','+ str(split1))
+        nb_inr = math.ceil(inrow / self.bram.p)
+        print_debug(self.bram.p)
+        nb_inc = split1
+        
+        #determine number of concurrent and serial mv dot products to do dotpmm
+        nb_req = nb_inc * nb_inr
+        dotpmv_in_parallel = max(math.floor(self.num_bram / nb_req), 1)
+        num_dotpmv = math.ceil(in2col / dotpmv_in_parallel)
+        print_debug(str('num_bram per dotpmv: ') + str(nb_req))
+        print_debug(str('num dotpmv parallel: ') + str(dotpmv_in_parallel))
+        print_debug(str('num_dotpmv: ') +  str(num_dotpmv))
+        
+        dotpmv_cc = self.dotpmv(inrow, incol, in2row, split1)
+        print_debug(str('dotpmv cc: ') +  str(dotpmv_cc))
+        total_cc = num_dotpmv * dotpmv_cc
+        
+        return total_cc
+        
+    def dotpmm_explore(self, inrow, incol, in2row, in2col):
+        assert incol == in2row
+        numBRAM_split = 1 #number of BRAMs that columns (dimension that is accumulated) are split between
+        delays = []
+        while (numBRAM_split*20) <= incol:
+            print_debug('\n\n')
+            
+            delay = self.dotpmm(inrow, incol, in2row, in2col, numBRAM_split)
+            delays.append(delay)
+            numBRAM_split += 1
+        print_debug(delays)
+        print(delays.index(min(delays)))
+        return min(delays)
 if __name__ == '__main__':
-    fpga = PIM_FPGA(8, False)
-    print(fpga.dotpmv_explore(400, 160, 160))
+    fpga = PIM_FPGA(8, True)
+    # print(fpga.dotpmv_explore(197, 768, 768))
+    print(fpga.dotpmm_explore(197, 768, 768, 64))
+    # print(fpga.dotpmm(197, 768, 768, 64, 7))
     #Double-pumped 8-bit vs radix-4 8-bit
     #0.145 vs 0.192
