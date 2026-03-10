@@ -1,0 +1,4 @@
+#Do 3x3 Conv 4 times
+#(depthwise convolution, so channels don't change (aka do 3 3x3x1 conv))
+     kh     kw
+conv1 3     3 
